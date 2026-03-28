@@ -48,6 +48,7 @@ class YouTubeClient:
         """
         Get top-level comments
         """
+        print("Getting top-level comments")
         response = (
             self.service.commentThreads()
             .list(
@@ -61,14 +62,14 @@ class YouTubeClient:
         )
         return response.get("items", [])
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
     def reject_comments(self, comment_ids: list[str]) -> None:
         """
         Reject selected comments
         """
         if not comment_ids:
             return
-
+        print(f"Rejecting {len(comment_ids)} comments.")
+        print(f"Rejecting comment {comment_ids[0]}")
         (
             self.service.comments()
             .setModerationStatus(

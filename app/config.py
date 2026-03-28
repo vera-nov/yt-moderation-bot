@@ -17,6 +17,7 @@ class Settings:
     yt_text_format: str
     yt_quota_daily_limit: int
     yt_quota_stop_percent: float
+    yt_min_comment_age_sec: int
     enable_reply_scan: bool
     moderation_batch_size: int
     dry_run: bool
@@ -39,6 +40,7 @@ def load_settings() -> Settings:
         yt_text_format=os.getenv("YT_TEXT_FORMAT", "plainText"),
         yt_quota_daily_limit=int(os.getenv("YT_QUOTA_DAILY_LIMIT", "10000")),
         yt_quota_stop_percent=float(os.getenv("YT_QUOTA_STOP_PERCENT", "0.9")),
+        yt_min_comment_age_sec=int(os.getenv("YT_MIN_COMMENT_AGE_SEC", "300")),
         enable_reply_scan=_get_bool("ENABLE_REPLY_SCAN", "true"),
         moderation_batch_size=int(os.getenv("MODERATION_BATCH_SIZE", "50")),
         dry_run=_get_bool("DRY_RUN", "false"),

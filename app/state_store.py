@@ -3,7 +3,17 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
+# YouTube quota resets at 12AM Pacific Time so...
+PT_TZ = ZoneInfo("America/Los_Angeles")
+
+def quota_day_key() -> str:
+    """
+    :return: PT date YYYY-MM-DD
+    :rtype: str
+    """
+    return datetime.now(PT_TZ).strftime("%Y-%m-%d")
 
 def utc_now_iso() -> str:
     """
@@ -38,7 +48,7 @@ class StateStore:
         finally:
             conn.close()
 
-    def init_db(self) -> None:
+    def init_db(self, dry_run: bool = False) -> None:
         """
         Initialize database
 
@@ -114,7 +124,7 @@ class StateStore:
                     INSERT INTO bot_state (id, enabled, state, enabled_at, dry_run, updated_at)
                     VALUES (1, 0, 'OFF', NULL, 0, ?)
                     """,
-                    (now,),
+                    (int(dry_run), now,),
                 )
 
             row = conn.execute("SELECT id FROM telegram_updates_offset WHERE id = 1").fetchone()
@@ -256,7 +266,7 @@ class StateStore:
         """
         Get statistics for the day
         """
-        day_key = utc_day_key()
+        day_key = quota_day_key()
         with self._conn() as conn:
             processed = conn.execute(
                 """
@@ -283,7 +293,7 @@ class StateStore:
         """
         Get info about quota usage today
         """
-        day_key = utc_day_key()
+        day_key = quota_day_key()
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT * FROM quota_usage WHERE quota_day_key = ?",
@@ -298,7 +308,7 @@ class StateStore:
             }
 
     def add_quota_units(self, units: int) -> None:
-        day_key = utc_day_key()
+        day_key = quota_day_key()
         now = utc_now_iso()
         with self._conn() as conn:
             row = conn.execute(
@@ -324,7 +334,7 @@ class StateStore:
                 )
 
     def set_quota_warning_sent(self, sent: bool) -> None:
-        day_key = utc_day_key()
+        day_key = quota_day_key()
         now = utc_now_iso()
         with self._conn() as conn:
             row = conn.execute(
@@ -389,9 +399,7 @@ class StateStore:
             datetime.now(timezone.utc) - timedelta(days=audit_ttl_days)
         ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-        quota_cutoff = (
-            datetime.now(timezone.utc) - timedelta(days=7)
-        ).strftime("%Y-%m-%d")
+        quota_cutoff = (datetime.now(PT_TZ) - timedelta(days=7)).strftime("%Y-%m-%d")
 
         with self._conn() as conn:
             conn.execute(
@@ -442,6 +450,20 @@ class StateStore:
                 f"""
                 UPDATE processed_comments
                 SET processed_result = 'rejected'
+                WHERE comment_id IN ({placeholders})
+                """,
+                comment_ids,
+            )
+    def mark_comments_reject_failed(self, comment_ids: list[str]) -> None:
+        if not comment_ids:
+            return
+
+        placeholders = ",".join("?" for _ in comment_ids)
+        with self._conn() as conn:
+            conn.execute(
+                f"""
+                UPDATE processed_comments
+                SET processed_result = 'reject_failed'
                 WHERE comment_id IN ({placeholders})
                 """,
                 comment_ids,

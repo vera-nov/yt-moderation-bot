@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def parse_utc(value: str) -> datetime:
@@ -28,7 +28,13 @@ class ModerationService:
             return
 
         enabled_at = parse_utc(bot_state["enabled_at"])
+        comment_cutoff = datetime.now(timezone.utc) - timedelta(seconds=self.settings.yt_min_comment_age_sec)
         dry_run = bot_state["state"] == "DRY_RUN"
+
+        # if next API call hits the quota threshold, pause the bot first
+        if self.quota.will_hit_threshold_with(1):
+            self._pause_for_quota(self.quota.get_status())
+            return
 
         # get latest comments
         items = self.youtube.list_comment_threads(
@@ -47,7 +53,12 @@ class ModerationService:
             # first: check top-level comment
             top = self._extract_top_level(item)
 
-            if parse_utc(top["published_at"]) < enabled_at:
+            top_published_at = parse_utc(top["published_at"])
+
+            if top_published_at > comment_cutoff:
+                continue
+
+            if top_published_at < enabled_at:
                 break
 
             existing_top = self.store.get_processed_comment(top["comment_id"])
@@ -97,7 +108,12 @@ class ModerationService:
                 continue
 
             for reply in self._extract_replies(item, top["comment_id"]):
-                if parse_utc(reply["published_at"]) < enabled_at:
+                reply_published_at = parse_utc(reply["published_at"])
+
+                if reply_published_at > comment_cutoff:
+                    continue
+
+                if reply_published_at < enabled_at:
                     continue
 
                 existing_reply = self.store.get_processed_comment(reply["comment_id"])
@@ -167,8 +183,20 @@ class ModerationService:
         if not batch:
             return None
 
+        if len(batch) == 1:
+            return self._reject_single_comment(batch[0])
+
+        # if self.quota.will_hit_threshold_with(50):
+        #     self._pause_for_quota(self.quota.get_status())
+        #     return
+
         ids = [item["comment_id"] for item in batch]
-        self.youtube.reject_comments(ids)
+
+        try:
+            self.youtube.reject_comments(ids)
+        except Exception as exc:
+            return self._reject_comments_one_by_one(batch, exc)
+
         quota_status = self.quota.charge_moderation_call()
         self.store.mark_comments_rejected(ids)
 
@@ -177,11 +205,59 @@ class ModerationService:
                 event_type="COMMENT_REJECTED",
                 payload=item,
             )
-            self.telegram.send_message(
-                self.settings.tg_admin_chat_id,
+            self._send_telegram_message_safe(
                 self._format_comment_message(item, quota_status, dry_run=False),
             )
 
+        return quota_status
+
+    def _reject_comments_one_by_one(self, batch: list[dict], batch_error: Exception) -> dict | None:
+        """
+        Reject comments one by one if batch reject was not successful
+        """
+        self._send_telegram_message_safe(
+            f"YT ERROR: batch reject failed, fallback to single reject: {batch_error}",
+        )
+
+        last_quota_status = None
+        for item in batch:
+            quota_status = self._reject_single_comment(item)
+            if quota_status is not None:
+                last_quota_status = quota_status
+
+        return last_quota_status
+
+    def _reject_single_comment(self, item: dict) -> dict | None:
+        """
+        Reject one comment, mark reject_failed upon YT error
+        """
+        comment_id = item["comment_id"]
+        # if self.quota.will_hit_threshold_with(50):
+        #     self._pause_for_quota(self.quota.get_status())
+        #     return
+
+        try:
+            self.youtube.reject_comments([comment_id])
+        except Exception as exc:
+            self.store.mark_comments_reject_failed([comment_id])
+            self.store.append_audit_log(
+                event_type="COMMENT_REJECT_FAILED",
+                payload={**item, "error": str(exc)},
+            )
+            self._send_telegram_message_safe(
+                f"YT ERROR: reject failed for commentId={comment_id}: {exc}",
+            )
+            return None
+
+        quota_status = self.quota.charge_moderation_call()
+        self.store.mark_comments_rejected([comment_id])
+        self.store.append_audit_log(
+            event_type="COMMENT_REJECTED",
+            payload=item,
+        )
+        self._send_telegram_message_safe(
+            self._format_comment_message(item, quota_status, dry_run=False),
+        )
         return quota_status
 
     def flush_before_disable(self) -> dict | None:
@@ -214,6 +290,15 @@ class ModerationService:
             self.settings.tg_admin_chat_id,
             self._format_comment_message(item, quota_status, dry_run=True),
         )
+
+    def _send_telegram_message_safe(self, text: str) -> None:
+        """
+        Send log to Telegram, do not stop bot upon TG error
+        """
+        try:
+            self.telegram.send_message(self.settings.tg_admin_chat_id, text)
+        except Exception:
+            pass
 
     def _pause_for_quota(self, quota_status: dict) -> None:
         """
@@ -300,6 +385,7 @@ class ModerationService:
             f"publishedAt={item['published_at']}\n"
             f"quotaSpentToday={quota_status['units_spent']}"
         )
+
     def flush_ready_pending_batches(self) -> bool:
         """
         Reject all full pending batches even if no new comments were found.
