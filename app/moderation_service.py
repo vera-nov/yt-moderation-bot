@@ -150,6 +150,9 @@ class ModerationService:
             published_at=item["published_at"],
             processed_result="pending_reject",
             rule_name=item["matched_word"],
+            text=item.get("text"),
+            author_display_name=item.get("author_display_name"),
+            author_channel_id=item.get("author_channel_id"),
         )
         self.store.append_audit_log(
             event_type="PENDING_MATCH",
