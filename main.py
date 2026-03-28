@@ -142,9 +142,24 @@ def main() -> None:
         if now >= next_yt_poll:
             try:
                 current = store.get_bot_state()
-                print(f"Running iteration... dry_run={current['dry_run']}")
+                pending_before = store.get_pending_rejections_count()
+
+                print(
+                    f"Running iteration... dry_run={current['dry_run']} pending_reject={pending_before}",
+                    flush=True,
+                )
+
+                if pending_before >= settings.moderation_batch_size:
+                    moderation.flush_ready_pending_batches() 
+                    pending_after = store.get_pending_rejections_count()
+                    print(f"After flush: pending_reject={pending_after}", flush=True)
+
+                    next_yt_poll = time.monotonic() + settings.yt_poll_interval_sec
+                    continue
+
                 moderation.run_iteration()
                 cleanup.run_if_needed()
+
             except Exception as exc:
                 details = str(exc)
 
