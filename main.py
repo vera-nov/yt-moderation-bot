@@ -106,11 +106,7 @@ def main() -> None:
     settings = load_settings()
 
     store = StateStore(settings.sqlite_path)
-    store.init_db()
-
-    current = store.get_bot_state()
-    if current["updated_at"] is None:
-        store.set_bot_state(enabled=False, state="OFF", dry_run=settings.dry_run, enabled_at=None)
+    store.init_db(dry_run=settings.dry_run)
 
     telegram = TelegramClient(settings.tg_bot_token)
     youtube = YouTubeClient(settings.client_secret_path, settings.token_path)
