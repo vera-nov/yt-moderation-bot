@@ -300,3 +300,25 @@ class ModerationService:
             f"publishedAt={item['published_at']}\n"
             f"quotaSpentToday={quota_status['units_spent']}"
         )
+    def flush_ready_pending_batches(self) -> bool:
+        """
+        Reject all full pending batches even if no new comments were found.
+        Returns True if the bot was paused because of quota.
+        """
+        bot_state = self.store.get_bot_state()
+        if not bot_state["enabled"]:
+            return False
+        if bot_state["state"] not in {"ACTIVE", "DRY_RUN"}:
+            return False
+        if bot_state["state"] == "DRY_RUN":
+            return False
+
+        while self.store.get_pending_rejections_count() >= self.settings.moderation_batch_size:
+            quota_status = self._reject_pending_batch(self.settings.moderation_batch_size)
+
+            if quota_status and quota_status["units_spent"] >= quota_status["stop_units"]:
+                flush_quota_status = self.flush_before_disable()
+                self._pause_for_quota(flush_quota_status or self.quota.get_status())
+                return True
+
+        return False
