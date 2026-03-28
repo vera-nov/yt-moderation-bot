@@ -71,9 +71,11 @@ class StateStore:
                     published_at TEXT NOT NULL,
                     first_seen_at TEXT NOT NULL,
                     processed_result TEXT NOT NULL,
-                    rule_name TEXT
+                    rule_name TEXT,
+                    text TEXT,
+                    author_display_name TEXT,
+                    author_channel_id TEXT
                 );
-
                 CREATE INDEX IF NOT EXISTS idx_processed_comments_published_at
                     ON processed_comments(published_at);
 
@@ -229,35 +231,24 @@ class StateStore:
         published_at: str,
         processed_result: str,
         rule_name: str | None,
+        text: str | None = None,
+        author_display_name: str | None = None,
+        author_channel_id: str | None = None,
     ) -> None:
-        """
-        Log processed comment
-        """
         with self._conn() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO processed_comments (
-                    comment_id,
-                    comment_type,
-                    thread_id,
-                    parent_comment_id,
-                    video_id,
-                    published_at,
-                    first_seen_at,
-                    processed_result,
-                    rule_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    comment_id, comment_type, thread_id, parent_comment_id, video_id,
+                    published_at, first_seen_at, processed_result, rule_name,
+                    text, author_display_name, author_channel_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    comment_id,
-                    comment_type,
-                    thread_id,
-                    parent_comment_id,
-                    video_id,
-                    published_at,
-                    utc_now_iso(),
-                    processed_result,
-                    rule_name,
+                    comment_id, comment_type, thread_id, parent_comment_id, video_id,
+                    published_at, utc_now_iso(), processed_result, rule_name,
+                    text, author_display_name, author_channel_id,
                 ),
             )
 

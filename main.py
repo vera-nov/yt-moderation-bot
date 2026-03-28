@@ -9,7 +9,28 @@ from app.state_store import StateStore
 from app.telegram_client import TelegramClient
 from app.youtube_client import YouTubeClient
 
+from tenacity import RetryError
+from googleapiclient.errors import HttpError
 
+def build_activation_message(store, quota) -> str:
+    bot_state = store.get_bot_state()
+    quota_status = quota.get_status()
+    counts = store.get_today_counts()
+
+    return (
+        "Бот активирован\n"
+        f"state={bot_state['state']}\n"
+        f"enabled={str(bot_state['enabled']).lower()}\n"
+        f"enabled_at={bot_state['enabled_at']}\n"
+        f"dry_run={str(bot_state['dry_run']).lower()}\n"
+        f"units_spent={quota_status['units_spent']}\n"
+        f"daily_limit={quota_status['daily_limit']}\n"
+        f"quota_percent={quota_status['percent']}%\n"
+        f"stop_units={quota_status['stop_units']}\n"
+        f"processed_today={counts['processed_today']}\n"
+        f"rejected_today={counts['rejected_today']}"
+    )
+    
 def process_telegram_commands(settings, store, telegram, quota, moderation) -> None:
     offset = store.get_last_update_id() + 1
     updates = telegram.get_updates(offset=offset, timeout=1)
@@ -99,21 +120,51 @@ def main() -> None:
     moderation = ModerationService(settings, store, youtube, telegram, rules, quota)
 
     print("Initialization completed, bot active")
+
+    tg_poll_interval_sec = 5
+    next_tg_poll = 0.0
+    next_yt_poll = 0.0
+
     while True:
-        try:
-            process_telegram_commands(settings, store, telegram, quota, moderation)
-            print(f"Running iteration... dry_run={settings.dry_run}")
-            moderation.run_iteration()
-            cleanup.run_if_needed()
-        except Exception as exc:
+        now = time.monotonic()
+
+        if now >= next_tg_poll:
             try:
-                telegram.send_message(settings.tg_admin_chat_id, f"ERROR: {exc}")
-            except Exception:
-                pass
-            print(f"ERROR: {exc}", flush=True)
+                process_telegram_commands(settings, store, telegram, quota, moderation)
+            except Exception as exc:
+                try:
+                    telegram.send_message(settings.tg_admin_chat_id, f"TG ERROR: {exc}")
+                except Exception:
+                    pass
+                print(f"TG ERROR: {exc}", flush=True)
+            next_tg_poll = now + tg_poll_interval_sec
 
-        time.sleep(settings.yt_poll_interval_sec)
+        if now >= next_yt_poll:
+            try:
+                current = store.get_bot_state()
+                print(f"Running iteration... dry_run={current['dry_run']}")
+                moderation.run_iteration()
+                cleanup.run_if_needed()
+            except Exception as exc:
+                details = str(exc)
 
+                if isinstance(exc, RetryError):
+                    inner = exc.last_attempt.exception()
+                    details = str(inner)
+
+                    if isinstance(inner, HttpError):
+                        body = inner.content.decode("utf-8", errors="ignore")
+                        details = f"HttpError status={inner.resp.status} body={body}"
+
+                try:
+                    telegram.send_message(settings.tg_admin_chat_id, f"YT ERROR: {details}")
+                except Exception:
+                    pass
+
+                print(f"YT ERROR: {details}", flush=True)
+            next_yt_poll = now + settings.yt_poll_interval_sec
+
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
