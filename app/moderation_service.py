@@ -381,11 +381,8 @@ class ModerationService:
         if not quota_status["warning_sent"]:
             self._send_telegram_message_safe(
                 (
-                    "QUOTA_WARNING\n"
-                    f"units_spent={quota_status['units_spent']}\n"
-                    f"limit={quota_status['daily_limit']}\n"
-                    f"percent={quota_status['percent']}%\n"
-                    "Бот переведен в QUOTA_PAUSED."
+                    "😴 Квота закончилась, мне пришлось уснуть.\n"
+                    "Когда дневная квота YouTube обновится, я автоматически продолжу работу."
                 )
             )
             self.quota.mark_warning_sent()
@@ -443,23 +440,32 @@ class ModerationService:
         """
         Build Telegram log message for matched comment
         """
-        event_type = "REPLY_REJECTED" if item["comment_type"] == "reply" else "TOP_LEVEL_REJECTED"
-        matched_word = item.get("matched_word") or item.get("rule_name")
-        text = item.get("text", "")
-        author_display_name = item.get("author_display_name", "")
-        author_channel_id = item.get("author_channel_id")
+        matched_word = item.get("matched_word") or item.get("rule_name") or "—"
+        text = (item.get("text") or "").strip()
+        author_display_name = (item.get("author_display_name") or "Неизвестный автор").strip()
+        author_channel_id = item.get("author_channel_id") or "—"
+        video_id = item.get("video_id") or "—"
+
+        comment_kind = "ответ" if item["comment_type"] == "reply" else "комментарий"
+        action_text = (
+            "🧪 Найден комментарий на удаление (тестовый режим)"
+            if dry_run
+            else "🚫 Комментарий скрыт"
+        )
+
+        if len(text) > 400:
+            text = text[:400] + "..."
 
         return (
-            f"{event_type}\n"
-            f"dry_run={str(dry_run).lower()}\n"
-            f"text={text}\n"
-            f"authorDisplayName={author_display_name}\n"
-            f"authorChannelId={author_channel_id}\n"
-            f"commentId={item['comment_id']}\n"
-            f"videoId={item.get('video_id')}\n"
-            f"matchedWord={matched_word}\n"
-            f"publishedAt={item['published_at']}\n"
-            f"quotaSpentToday={quota_status['units_spent']}"
+            f"{action_text}\n\n"
+            f"Тип: {comment_kind}\n"
+            f"Автор: {author_display_name}\n"
+            f"Стоп-слово: {matched_word}\n"
+            f"Текст: {text}\n\n"
+            f"ID комментария: {item['comment_id']}\n"
+            f"ID автора: {author_channel_id}\n"
+            f"ID видео: {video_id}\n"
+            f"Израсходовано квоты сегодня: {quota_status['units_spent']}"
         )
 
     def flush_ready_pending_batches(self) -> bool:

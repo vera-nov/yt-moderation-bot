@@ -46,7 +46,7 @@ You will also need these local files in the project directory:
 
 To get `TG_ADMIN_USER_ID` and `TG_ADMIN_CHAT_ID`:
 
-1. Open a private chat with your new bot.
+1. Add the bot to a group chat.
 2. Send any message, for example `/start`.
 3. Open this URL in your browser:
 
@@ -55,8 +55,6 @@ https://api.telegram.org/bot<TG_BOT_TOKEN>/getUpdates
 ```
 
 4. In the JSON response:
-
-   * `from.id` → use as `TG_ADMIN_USER_ID`
    * `chat.id` → use as `TG_ADMIN_CHAT_ID`
 
 ---
@@ -242,3 +240,4 @@ If everything is correct, the service should be shown as `active (running)`.
 sudo systemctl daemon-reload
 sudo systemctl restart yt-moderation-bot.service
 ```
+* Get the command panel for the bot by sending `/menu` to the Telegram group chat.

@@ -58,12 +58,10 @@ def build_quota_paused_message() -> str:
     """
     Build status message for QUOTA_PAUSED state
     """
-    hours, minutes, reset_at_pt = quota_reset_eta()
+    hours, minutes, _ = quota_reset_eta()
     return (
-        "Сейчас бот на паузе по квоте.\n"
-        "state=QUOTA_PAUSED\n"
-        f"До сброса квоты осталось {hours} ч {minutes} мин\n"
-        f"reset_at_pt={reset_at_pt}"
+        "😴 Квота закончилась, мне пришлось уснуть.\n"
+        f"До обновления квоты осталось примерно {hours} ч {minutes} мин."
     )
 
 
@@ -90,12 +88,7 @@ def try_resume_after_quota_reset(settings, store, telegram) -> None:
     try:
         telegram.send_message(
             settings.tg_admin_chat_id,
-            (
-                "Квота YouTube сброшена.\n"
-                "Бот снова включен.\n"
-                f"state={'DRY_RUN' if current['dry_run'] else 'ACTIVE'}\n"
-                f"enabled_at={enabled_at}"
-            ),
+            "🌅 Квота обновилась, я снова работаю.",
         )
     except Exception:
         pass
@@ -165,10 +158,10 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
         if command == "/enable":
             current = store.get_bot_state()
             if current["state"] == "ACTIVE" and current["enabled"]:
-                telegram.send_message(chat_id, "Бот уже включён.\nstate=ACTIVE")
+                telegram.send_message(chat_id, "✅ Я уже работаю.")
                 continue
             if current["state"] == "DRY_RUN" and current["enabled"]:
-                telegram.send_message(chat_id, "Бот уже включён.\nstate=DRY_RUN")
+                telegram.send_message(chat_id, "🧪 Я уже работаю в тестовом режиме.")
                 continue
             if current["state"] == "QUOTA_PAUSED":
                 telegram.send_message(chat_id, build_quota_paused_message())
@@ -178,34 +171,41 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
             enabled_at = store.enable_bot(dry_run=current["dry_run"])
             telegram.send_message(
                 chat_id,
-                f"Бот включен.\nstate={'DRY_RUN' if current['dry_run'] else 'ACTIVE'}\nenabled_at={enabled_at}",
+                "🧪 Бот включён. Я проверяю комментарии в тестовом режиме."
+                if current["dry_run"]
+                else "✅ Бот включён. Я снова проверяю комментарии.",
             )
 
         elif command == "/disable":
             moderation.flush_before_disable()
             store.disable_bot()
-            telegram.send_message(chat_id, "Бот выключен.\nstate=OFF")
+            telegram.send_message(chat_id, "😴 Бот выключен. Я больше не проверяю комментарии.")
 
         elif command == "/dryrun_on":
             store.set_dry_run(True)
             state = store.get_bot_state()
-            telegram.send_message(chat_id, f"dry_run=true\nstate={state['state']}")
+            telegram.send_message(
+                chat_id,
+                "🧪 Тестовый режим включён.\nТеперь я только сообщаю о найденных комментариях, без удаления."
+            )
 
         elif command == "/dryrun_off":
             store.set_dry_run(False)
             state = store.get_bot_state()
-            telegram.send_message(chat_id, f"dry_run=false\nstate={state['state']}")
+            telegram.send_message(
+                chat_id,
+                "✅ Тестовый режим выключен.\nТеперь я снова скрываю комментарии по стоп-словам."
+            )
 
         elif command == "/quota":
             quota_status = quota.get_status()
             telegram.send_message(
                 chat_id,
                 (
-                    "Quota status\n"
-                    f"units_spent={quota_status['units_spent']}\n"
-                    f"daily_limit={quota_status['daily_limit']}\n"
-                    f"percent={quota_status['percent']}%\n"
-                    f"stop_units={quota_status['stop_units']}"
+                    "📊 Квота YouTube на сегодня\n"
+                    f"Израсходовано: {quota_status['units_spent']} из {quota_status['daily_limit']}\n"
+                    f"Использовано: {quota_status['percent']}%\n"
+                    f"Лимит остановки бота: {quota_status['stop_units']}"
                 ),
             )
 
@@ -216,15 +216,13 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
             telegram.send_message(
                 chat_id,
                 (
-                    "Bot status\n"
-                    f"state={bot_state['state']}\n"
-                    f"enabled={str(bot_state['enabled']).lower()}\n"
-                    f"enabled_at={bot_state['enabled_at']}\n"
-                    f"dry_run={str(bot_state['dry_run']).lower()}\n"
-                    f"units_spent={quota_status['units_spent']}\n"
-                    f"quota_percent={quota_status['percent']}%\n"
-                    f"processed_today={counts['processed_today']}\n"
-                    f"rejected_today={counts['rejected_today']}"
+                    "🤖 Состояние бота\n"
+                    f"Режим: {bot_state['state']}\n"
+                    f"Включён: {'да' if bot_state['enabled'] else 'нет'}\n"
+                    f"Тестовый режим: {'да' if bot_state['dry_run'] else 'нет'}\n"
+                    f"Обработано сегодня: {counts['processed_today']}\n"
+                    f"Скрыто сегодня: {counts['rejected_today']}\n"
+                    f"Израсходовано квоты: {quota_status['units_spent']} ({quota_status['percent']}%)"
                 ),
             )
 
