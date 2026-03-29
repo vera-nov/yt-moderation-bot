@@ -26,7 +26,6 @@ class Settings:
     dry_run: bool
     tg_bot_token: str
     tg_admin_chat_id: int
-    tg_admin_user_id: int
     processed_ttl_days: int
     audit_ttl_days: int
     stop_words_file: str
@@ -52,7 +51,6 @@ def load_settings() -> Settings:
         dry_run=_get_bool("DRY_RUN", "false"),
         tg_bot_token=os.environ["TG_BOT_TOKEN"],
         tg_admin_chat_id=int(os.environ["TG_ADMIN_CHAT_ID"]),
-        tg_admin_user_id=int(os.environ["TG_ADMIN_USER_ID"]),
         processed_ttl_days=int(os.getenv("PROCESSED_TTL_DAYS", "30")),
         audit_ttl_days=int(os.getenv("AUDIT_TTL_DAYS", "30")),
         stop_words_file=os.getenv("STOP_WORDS_FILE", "./stop_words.txt"),

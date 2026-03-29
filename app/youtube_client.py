@@ -11,6 +11,7 @@ SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 
 
 class YouTubeClient:
+
     def __init__(self, client_secret_path: str, token_path: str):
         """
         Initialize YouTube client and authorized service
@@ -77,6 +78,7 @@ class YouTubeClient:
             .setModerationStatus(
                 id=",".join(comment_ids),
                 moderationStatus="rejected",
+                # banAuthor=True,
             )
             .execute()
         )

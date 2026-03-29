@@ -23,7 +23,6 @@ The bot uses the following environment variables:
 
 ```env
 TG_BOT_TOKEN=
-TG_ADMIN_USER_ID=
 TG_ADMIN_CHAT_ID=
 CLIENT_SECRET_PATH=
 YT_CHANNEL_ID=

@@ -12,18 +12,27 @@ class TelegramClient:
         self.client = httpx.Client(timeout=20.0)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
-    def send_message(self, chat_id: int, text: str) -> dict:
+    def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: dict | None = None,
+        reply_to_message_id: int | None = None,
+        ) -> dict:
         """
         Send text message via Telegram bot API
         """
-        resp = self.client.post(
-            f"{self.base_url}/sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "disable_web_page_preview": True,
-            },
-        )
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        if reply_to_message_id is not None:
+            payload["reply_to_message_id"] = reply_to_message_id
+
+        resp = self.client.post(f"{self.base_url}/sendMessage", json=payload)
         resp.raise_for_status()
         data = resp.json()
         if not data.get("ok"):
