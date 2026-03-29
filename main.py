@@ -14,40 +14,33 @@ from app.youtube_client import YouTubeClient
 from tenacity import RetryError
 from googleapiclient.errors import HttpError
 
-def build_activation_message(store, quota) -> str:
-    bot_state = store.get_bot_state()
-    quota_status = quota.get_status()
-    counts = store.get_today_counts()
-
-    return (
-        "Бот активирован\n"
-        f"state={bot_state['state']}\n"
-        f"enabled={str(bot_state['enabled']).lower()}\n"
-        f"enabled_at={bot_state['enabled_at']}\n"
-        f"dry_run={str(bot_state['dry_run']).lower()}\n"
-        f"units_spent={quota_status['units_spent']}\n"
-        f"daily_limit={quota_status['daily_limit']}\n"
-        f"quota_percent={quota_status['percent']}%\n"
-        f"stop_units={quota_status['stop_units']}\n"
-        f"processed_today={counts['processed_today']}\n"
-        f"rejected_today={counts['rejected_today']}"
-    )
-
 PT_TZ = ZoneInfo("America/Los_Angeles")
 
 def parse_utc(value: str) -> datetime:
+    """
+    Parse UTC ISO timestamp and return timezone-aware datetime
+    """
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
 def pt_day_key_now() -> str:
+    """
+    Return current PT date as YYYY-MM-DD
+    """
     return datetime.now(PT_TZ).strftime("%Y-%m-%d")
 
 
 def pt_day_key_from_utc_iso(value: str) -> str:
+    """
+    Convert UTC ISO timestamp to PT date key
+    """
     return parse_utc(value).astimezone(PT_TZ).strftime("%Y-%m-%d")
 
 
 def quota_reset_eta() -> tuple[int, int, str]:
+    """
+    Calculate time left until next quota reset in PT
+    """
     now_pt = datetime.now(PT_TZ)
     next_reset_pt = (now_pt + timedelta(days=1)).replace(
         hour=0,
@@ -62,6 +55,9 @@ def quota_reset_eta() -> tuple[int, int, str]:
 
 
 def build_quota_paused_message() -> str:
+    """
+    Build status message for QUOTA_PAUSED state
+    """
     hours, minutes, reset_at_pt = quota_reset_eta()
     return (
         "Сейчас бот на паузе по квоте.\n"
@@ -72,6 +68,9 @@ def build_quota_paused_message() -> str:
 
 
 def try_resume_after_quota_reset(settings, store, telegram) -> None:
+    """
+    Resume bot after PT day rollover if it was paused by quota
+    """
     current = store.get_bot_state()
     if current["state"] != "QUOTA_PAUSED":
         return
@@ -107,6 +106,9 @@ def try_resume_after_quota_reset(settings, store, telegram) -> None:
     )
     
 def process_telegram_commands(settings, store, telegram, quota, moderation) -> None:
+    """
+    Process admin commands received from Telegram bot
+    """
     offset = store.get_last_update_id() + 1
     updates = telegram.get_updates(offset=offset, timeout=1)
 
@@ -191,6 +193,9 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
 
 
 def main() -> None:
+    """
+    Initialize services and run the main bot loop
+    """
     settings = load_settings()
 
     store = StateStore(settings.sqlite_path)

@@ -4,12 +4,18 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 class TelegramClient:
     def __init__(self, bot_token: str):
+        """
+        Initialize Telegram API client
+        """
         self.bot_token = bot_token
         self.base_url = f"https://api.telegram.org/bot{bot_token}"
         self.client = httpx.Client(timeout=20.0)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
     def send_message(self, chat_id: int, text: str) -> dict:
+        """
+        Send text message via Telegram bot API
+        """
         resp = self.client.post(
             f"{self.base_url}/sendMessage",
             json={

@@ -12,6 +12,9 @@ SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 
 class YouTubeClient:
     def __init__(self, client_secret_path: str, token_path: str):
+        """
+        Initialize YouTube client and authorized service
+        """
         self.client_secret_path = client_secret_path
         self.token_path = token_path
         self.service = self._build_service()

@@ -6,11 +6,17 @@ class QuotaManager:
     Manage daily quota
     """
     def __init__(self, store, daily_limit: int, stop_percent: float):
+        """
+        Initialize quota manager settings
+        """
         self.store = store
         self.daily_limit = daily_limit
         self.stop_percent = stop_percent
 
     def get_status(self) -> dict:
+        """
+        Return current quota usage and thresholds
+        """
         usage = self.store.get_quota_usage_today()
         stop_units = ceil(self.daily_limit * self.stop_percent)
         percent = (usage["units_spent"] / self.daily_limit * 100) if self.daily_limit else 0.0
@@ -45,4 +51,7 @@ class QuotaManager:
         return self.get_status()
 
     def mark_warning_sent(self) -> None:
+        """
+        Mark quota warning as sent for today
+        """
         self.store.set_quota_warning_sent(True)
