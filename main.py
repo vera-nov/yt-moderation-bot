@@ -1,4 +1,6 @@
 import time
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from app.cleanup_service import CleanupService
 from app.config import load_settings
@@ -30,6 +32,79 @@ def build_activation_message(store, quota) -> str:
         f"processed_today={counts['processed_today']}\n"
         f"rejected_today={counts['rejected_today']}"
     )
+
+PT_TZ = ZoneInfo("America/Los_Angeles")
+
+def parse_utc(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+def pt_day_key_now() -> str:
+    return datetime.now(PT_TZ).strftime("%Y-%m-%d")
+
+
+def pt_day_key_from_utc_iso(value: str) -> str:
+    return parse_utc(value).astimezone(PT_TZ).strftime("%Y-%m-%d")
+
+
+def quota_reset_eta() -> tuple[int, int, str]:
+    now_pt = datetime.now(PT_TZ)
+    next_reset_pt = (now_pt + timedelta(days=1)).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    delta = next_reset_pt - now_pt
+    total_minutes = max(0, int(delta.total_seconds() // 60))
+    hours, minutes = divmod(total_minutes, 60)
+    return hours, minutes, next_reset_pt.strftime("%Y-%m-%d %H:%M %Z")
+
+
+def build_quota_paused_message() -> str:
+    hours, minutes, reset_at_pt = quota_reset_eta()
+    return (
+        "Сейчас бот на паузе по квоте.\n"
+        "state=QUOTA_PAUSED\n"
+        f"До сброса квоты осталось {hours} ч {minutes} мин\n"
+        f"reset_at_pt={reset_at_pt}"
+    )
+
+
+def try_resume_after_quota_reset(settings, store, telegram) -> None:
+    current = store.get_bot_state()
+    if current["state"] != "QUOTA_PAUSED":
+        return
+
+    paused_at = current.get("updated_at")
+    if not paused_at:
+        return
+
+    paused_day_pt = pt_day_key_from_utc_iso(paused_at)
+    current_day_pt = pt_day_key_now()
+
+    if paused_day_pt == current_day_pt:
+        return
+
+    enabled_at = store.enable_bot(dry_run=current["dry_run"])
+
+    try:
+        telegram.send_message(
+            settings.tg_admin_chat_id,
+            (
+                "Квота YouTube сброшена.\n"
+                "Бот снова включен.\n"
+                f"state={'DRY_RUN' if current['dry_run'] else 'ACTIVE'}\n"
+                f"enabled_at={enabled_at}"
+            ),
+        )
+    except Exception:
+        pass
+
+    print(
+        f"Quota reset detected, bot resumed: state={'DRY_RUN' if current['dry_run'] else 'ACTIVE'}",
+        flush=True,
+    )
     
 def process_telegram_commands(settings, store, telegram, quota, moderation) -> None:
     offset = store.get_last_update_id() + 1
@@ -47,6 +122,19 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
 
         if text == "/enable":
             current = store.get_bot_state()
+
+            if current["state"] == "ACTIVE" and current["enabled"]:
+                telegram.send_message(chat_id, "Бот уже включён.\nstate=ACTIVE")
+                continue
+
+            if current["state"] == "DRY_RUN" and current["enabled"]:
+                telegram.send_message(chat_id, "Бот уже включён.\nstate=DRY_RUN")
+                continue
+
+            if current["state"] == "QUOTA_PAUSED":
+                telegram.send_message(chat_id, build_quota_paused_message())
+                continue
+
             store.reset_session_data()
             enabled_at = store.enable_bot(dry_run=current["dry_run"])
             telegram.send_message(
@@ -122,6 +210,7 @@ def main() -> None:
     next_yt_poll = 0.0
 
     while True:
+        try_resume_after_quota_reset(settings, store, telegram)
         now = time.monotonic()
 
         if now >= next_tg_poll:
@@ -138,6 +227,16 @@ def main() -> None:
         if now >= next_yt_poll:
             try:
                 current = store.get_bot_state()
+
+                if current["state"] == "QUOTA_PAUSED":
+                    print("Skipping YT poll: state=QUOTA_PAUSED", flush=True)
+                    next_yt_poll = now + settings.yt_poll_interval_sec
+                    continue
+
+                if not current["enabled"] or current["state"] not in {"ACTIVE", "DRY_RUN"}:
+                    next_yt_poll = now + settings.yt_poll_interval_sec
+                    continue
+
                 pending_before = store.get_pending_rejections_count()
 
                 print(
@@ -146,10 +245,9 @@ def main() -> None:
                 )
 
                 if pending_before >= settings.moderation_batch_size:
-                    moderation.flush_ready_pending_batches() 
+                    moderation.flush_ready_pending_batches()
                     pending_after = store.get_pending_rejections_count()
                     print(f"After flush: pending_reject={pending_after}", flush=True)
-
                     next_yt_poll = time.monotonic() + settings.yt_poll_interval_sec
                     continue
 
@@ -158,11 +256,9 @@ def main() -> None:
 
             except Exception as exc:
                 details = str(exc)
-
                 if isinstance(exc, RetryError):
                     inner = exc.last_attempt.exception()
                     details = str(inner)
-
                     if isinstance(inner, HttpError):
                         body = inner.content.decode("utf-8", errors="ignore")
                         details = f"HttpError status={inner.resp.status} body={body}"
@@ -173,8 +269,8 @@ def main() -> None:
                     pass
 
                 print(f"YT ERROR: {details}", flush=True)
-            next_yt_poll = now + settings.yt_poll_interval_sec
 
+            next_yt_poll = now + settings.yt_poll_interval_sec
         time.sleep(1)
 
 if __name__ == "__main__":
