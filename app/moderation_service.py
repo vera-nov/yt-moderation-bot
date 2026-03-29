@@ -1,9 +1,22 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Literal
+
+from googleapiclient.errors import HttpError
 
 
 def parse_utc(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
+
+@dataclass(frozen=True)
+class RejectResult:
+    status: Literal["empty", "success", "quota_paused", "failed"]
+    quota_status: dict | None = None
+
+    @property
+    def paused_for_quota(self) -> bool:
+        return self.status == "quota_paused"
 
 class ModerationService:
     def __init__(self, settings, store, youtube, telegram, rules, quota):
@@ -45,14 +58,12 @@ class ModerationService:
         quota_status = self.quota.charge_comment_threads_list()
 
         if quota_status["units_spent"] >= quota_status["stop_units"]:
-            flush_quota_status = self.flush_before_disable()
             self._pause_for_quota(flush_quota_status or self.quota.get_status())
             return
 
         for item in items:
             # first: check top-level comment
             top = self._extract_top_level(item)
-
             top_published_at = parse_utc(top["published_at"])
 
             if top_published_at > comment_cutoff:
@@ -83,11 +94,14 @@ class ModerationService:
                         self._finalize_dry_run(candidate)
                     else:
                         self._save_pending(candidate)
+
                         if self.store.get_pending_rejections_count() >= self.settings.moderation_batch_size:
-                            quota_status = self._reject_pending_batch(self.settings.moderation_batch_size)
+                            reject_result = self._reject_pending_batch(self.settings.moderation_batch_size)
+                            if reject_result.paused_for_quota:
+                                return
+                            quota_status = reject_result.quota_status
                             if quota_status and quota_status["units_spent"] >= quota_status["stop_units"]:
-                                flush_quota_status = self.flush_before_disable()
-                                self._pause_for_quota(flush_quota_status or self.quota.get_status())
+                                self._pause_for_quota(quota_status)
                                 return
                 else:
                     self.store.add_processed_comment(
@@ -132,10 +146,15 @@ class ModerationService:
                     else:
                         self._save_pending(candidate)
                         if self.store.get_pending_rejections_count() >= self.settings.moderation_batch_size:
-                            quota_status = self._reject_pending_batch(self.settings.moderation_batch_size)
+                            reject_result = self._reject_pending_batch(
+                                self.settings.moderation_batch_size
+                            )
+
+                            if reject_result.paused_for_quota:
+                                return
+                            quota_status = reject_result.quota_status
                             if quota_status and quota_status["units_spent"] >= quota_status["stop_units"]:
-                                flush_quota_status = self.flush_before_disable()
-                                self._pause_for_quota(flush_quota_status or self.quota.get_status())
+                                self._pause_for_quota(quota_status)
                                 return
                 else:
                     self.store.add_processed_comment(
@@ -174,27 +193,51 @@ class ModerationService:
             event_type="PENDING_MATCH",
             payload=item,
         )
+    
+    def _pause_for_upcoming_moderation(self) -> RejectResult:
+        quota_status = self.quota.get_status()
+        self._pause_for_quota(quota_status)
+        return RejectResult(status="quota_paused", quota_status=quota_status)
 
-    def _reject_pending_batch(self, limit: int) -> dict | None:
+    def _is_quota_error(self, exc: Exception) -> bool:
+        if not isinstance(exc, HttpError):
+            return False
+
+        status = getattr(exc.resp, "status", None)
+        content = getattr(exc, "content", b"") or b""
+
+        if isinstance(content, bytes):
+            body = content.decode("utf-8", errors="ignore").lower()
+        else:
+            body = str(content).lower()
+
+        return status in {403, 429} and (
+            "quota" in body
+            or "limitexceeded" in body
+            or "ratelimitexceeded" in body
+        )
+
+    def _reject_pending_batch(self, limit: int) -> RejectResult:
         """
         Reject comments (call API, write to db, log in Telegram)
         """
         batch = self.store.get_pending_rejections(limit)
         if not batch:
-            return None
+            return RejectResult(status="empty")
 
         if len(batch) == 1:
             return self._reject_single_comment(batch[0])
 
-        # if self.quota.will_hit_threshold_with(50):
-        #     self._pause_for_quota(self.quota.get_status())
-        #     return
+        if self.quota.will_hit_threshold_with(50):
+            return self._pause_for_upcoming_moderation()
 
         ids = [item["comment_id"] for item in batch]
 
         try:
             self.youtube.reject_comments(ids)
         except Exception as exc:
+            if self._is_quota_error(exc):
+                return self._pause_for_upcoming_moderation()
             return self._reject_comments_one_by_one(batch, exc)
 
         quota_status = self.quota.charge_moderation_call()
@@ -209,9 +252,9 @@ class ModerationService:
                 self._format_comment_message(item, quota_status, dry_run=False),
             )
 
-        return quota_status
+        return RejectResult(status="success", quota_status=quota_status)
 
-    def _reject_comments_one_by_one(self, batch: list[dict], batch_error: Exception) -> dict | None:
+    def _reject_comments_one_by_one(self, batch: list[dict], batch_error: Exception) -> RejectResult:
         """
         Reject comments one by one if batch reject was not successful
         """
@@ -220,25 +263,36 @@ class ModerationService:
         )
 
         last_quota_status = None
+
         for item in batch:
-            quota_status = self._reject_single_comment(item)
-            if quota_status is not None:
-                last_quota_status = quota_status
+            result = self._reject_single_comment(item)
 
-        return last_quota_status
+            if result.paused_for_quota:
+                return result
 
-    def _reject_single_comment(self, item: dict) -> dict | None:
+            if result.quota_status is not None:
+                last_quota_status = result.quota_status
+
+        if last_quota_status is not None:
+            return RejectResult(status="success", quota_status=last_quota_status)
+
+        return RejectResult(status="failed")
+
+    def _reject_single_comment(self, item: dict) -> RejectResult:
         """
         Reject one comment, mark reject_failed upon YT error
         """
         comment_id = item["comment_id"]
-        # if self.quota.will_hit_threshold_with(50):
-        #     self._pause_for_quota(self.quota.get_status())
-        #     return
+
+        if self.quota.will_hit_threshold_with(50):
+            return self._pause_for_upcoming_moderation()
 
         try:
             self.youtube.reject_comments([comment_id])
         except Exception as exc:
+            if self._is_quota_error(exc):
+                return self._pause_for_upcoming_moderation()
+
             self.store.mark_comments_reject_failed([comment_id])
             self.store.append_audit_log(
                 event_type="COMMENT_REJECT_FAILED",
@@ -247,7 +301,7 @@ class ModerationService:
             self._send_telegram_message_safe(
                 f"YT ERROR: reject failed for commentId={comment_id}: {exc}",
             )
-            return None
+            return RejectResult(status="failed")
 
         quota_status = self.quota.charge_moderation_call()
         self.store.mark_comments_rejected([comment_id])
@@ -258,12 +312,12 @@ class ModerationService:
         self._send_telegram_message_safe(
             self._format_comment_message(item, quota_status, dry_run=False),
         )
-        return quota_status
+        return RejectResult(status="success", quota_status=quota_status)
 
-    def flush_before_disable(self) -> dict | None:
+    def flush_before_disable(self) -> RejectResult:
         pending_count = self.store.get_pending_rejections_count()
         if pending_count == 0:
-            return None
+            return RejectResult(status="empty")
         return self._reject_pending_batch(pending_count)
     
     def _finalize_dry_run(self, item: dict) -> None:
@@ -400,11 +454,14 @@ class ModerationService:
             return False
 
         while self.store.get_pending_rejections_count() >= self.settings.moderation_batch_size:
-            quota_status = self._reject_pending_batch(self.settings.moderation_batch_size)
+            reject_result = self._reject_pending_batch(self.settings.moderation_batch_size)
 
+            if reject_result.paused_for_quota:
+                return True
+
+            quota_status = reject_result.quota_status
             if quota_status and quota_status["units_spent"] >= quota_status["stop_units"]:
-                flush_quota_status = self.flush_before_disable()
-                self._pause_for_quota(flush_quota_status or self.quota.get_status())
+                self._pause_for_quota(quota_status)
                 return True
 
         return False

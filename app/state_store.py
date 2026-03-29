@@ -122,7 +122,7 @@ class StateStore:
                 conn.execute(
                     """
                     INSERT INTO bot_state (id, enabled, state, enabled_at, dry_run, updated_at)
-                    VALUES (1, 0, 'OFF', NULL, 0, ?)
+                    VALUES (1, 0, 'OFF', NULL, ?, ?)
                     """,
                     (int(dry_run), now,),
                 )
@@ -266,7 +266,7 @@ class StateStore:
         """
         Get statistics for the day
         """
-        day_key = quota_day_key()
+        day_key = utc_day_key()
         with self._conn() as conn:
             processed = conn.execute(
                 """

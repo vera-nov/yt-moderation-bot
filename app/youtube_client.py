@@ -69,7 +69,6 @@ class YouTubeClient:
         if not comment_ids:
             return
         print(f"Rejecting {len(comment_ids)} comments.")
-        print(f"Rejecting comment {comment_ids[0]}")
         (
             self.service.comments()
             .setModerationStatus(
