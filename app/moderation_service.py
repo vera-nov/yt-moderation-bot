@@ -26,6 +26,7 @@ class RejectResult:
 
 
 class ModerationService:
+
     def __init__(self, settings, store, youtube, telegram, rules, quota):
         """
         Initialize moderation service dependencies

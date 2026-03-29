@@ -104,7 +104,32 @@ def try_resume_after_quota_reset(settings, store, telegram) -> None:
         f"Quota reset detected, bot resumed: state={'DRY_RUN' if current['dry_run'] else 'ACTIVE'}",
         flush=True,
     )
-    
+
+LABEL_TO_COMMAND = {
+    "/enable": "/enable",
+    "включить бота": "/enable",
+
+    "/disable": "/disable",
+    "выключить бота": "/disable",
+
+    "/dryrun_on": "/dryrun_on",
+    "включить тестовый режим": "/dryrun_on",
+
+    "/dryrun_off": "/dryrun_off",
+    "выключить тестовый режим": "/dryrun_off",
+
+    "/quota": "/quota",
+    "показать квоту": "/quota",
+
+    "/status": "/status",
+    "статус бота": "/status",
+}
+
+def normalize_command(text: str | None) -> str | None:
+    if not text:
+        return None
+    return LABEL_TO_COMMAND.get(text.strip().lower())
+
 def process_telegram_commands(settings, store, telegram, quota, moderation) -> None:
     """
     Process admin commands received from Telegram bot
@@ -115,14 +140,15 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
     for update in updates:
         store.set_last_update_id(update["update_id"])
 
-        text, chat_id, user_id = telegram.extract_command(update)
-        if not text:
+        text, chat_id, _user_id = telegram.extract_command(update)
+        command = normalize_command(text)
+        if not command:
             continue
 
-        if chat_id != settings.tg_admin_chat_id or user_id != settings.tg_admin_user_id:
+        if chat_id != settings.tg_admin_chat_id:
             continue
 
-        if text == "/enable":
+        if command == "/enable":
             current = store.get_bot_state()
 
             if current["state"] == "ACTIVE" and current["enabled"]:
@@ -144,22 +170,22 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
                 f"Бот включен.\nstate={'DRY_RUN' if current['dry_run'] else 'ACTIVE'}\nenabled_at={enabled_at}",
             )
 
-        elif text == "/disable":
+        elif command == "/disable":
             moderation.flush_before_disable()
             store.disable_bot()
             telegram.send_message(chat_id, "Бот выключен. state=OFF")
 
-        elif text == "/dryrun_on":
+        elif command == "/dryrun_on":
             store.set_dry_run(True)
             state = store.get_bot_state()
             telegram.send_message(chat_id, f"dry_run=true\nstate={state['state']}")
 
-        elif text == "/dryrun_off":
+        elif command == "/dryrun_off":
             store.set_dry_run(False)
             state = store.get_bot_state()
             telegram.send_message(chat_id, f"dry_run=false\nstate={state['state']}")
 
-        elif text == "/quota":
+        elif command == "/quota":
             quota_status = quota.get_status()
             telegram.send_message(
                 chat_id,
@@ -172,7 +198,7 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
                 ),
             )
 
-        elif text == "/status":
+        elif command == "/status":
             bot_state = store.get_bot_state()
             quota_status = quota.get_status()
             counts = store.get_today_counts()
@@ -189,6 +215,20 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
                     f"processed_today={counts['processed_today']}\n"
                     f"rejected_today={counts['rejected_today']}"
                 ),
+            )
+        
+        elif command == "/menu":
+            telegram.send_message(
+                chat_id,
+                "Панель управления ботом:",
+                reply_markup={
+                    "keyboard": [
+                        [{"text": "Включить бота"}, {"text": "Выключить бота"}],
+                        [{"text": "Включить тестовый режим"}, {"text": "Выключить тестовый режим"}],
+                        [{"text": "Показать квоту"}, {"text": "Статус бота"}],
+                    ],
+                    "resize_keyboard": True,
+                },
             )
 
 
