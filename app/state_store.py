@@ -36,10 +36,16 @@ class StateStore:
     Store bot state in SQLite
     """
     def __init__(self, db_path: str):
+        """
+        Initialize SQLite state store
+        """
         self.db_path = db_path
 
     @contextmanager
     def _conn(self):
+        """
+        Open SQLite connection with auto-commit and row mapping
+        """
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row # access rows via row names
         try:
@@ -245,6 +251,9 @@ class StateStore:
         author_display_name: str | None = None,
         author_channel_id: str | None = None,
     ) -> None:
+        """
+        Save or update processed comment in database
+        """
         with self._conn() as conn:
             conn.execute(
                 """
@@ -308,6 +317,9 @@ class StateStore:
             }
 
     def add_quota_units(self, units: int) -> None:
+        """
+        Add spent quota units for current PT day
+        """
         day_key = quota_day_key()
         now = utc_now_iso()
         with self._conn() as conn:
@@ -334,6 +346,9 @@ class StateStore:
                 )
 
     def set_quota_warning_sent(self, sent: bool) -> None:
+        """
+        Save quota warning flag for current PT day
+        """
         day_key = quota_day_key()
         now = utc_now_iso()
         with self._conn() as conn:
@@ -360,6 +375,9 @@ class StateStore:
                 )
 
     def get_last_update_id(self) -> int:
+        """
+        Return last processed Telegram update id
+        """
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT last_update_id FROM telegram_updates_offset WHERE id = 1"
@@ -367,6 +385,9 @@ class StateStore:
             return int(row["last_update_id"])
 
     def set_last_update_id(self, update_id: int) -> None:
+        """
+        Save last processed Telegram update id
+        """
         with self._conn() as conn:
             conn.execute(
                 """
@@ -378,6 +399,9 @@ class StateStore:
             )
 
     def append_audit_log(self, event_type: str, payload: dict[str, Any]) -> None:
+        """
+        Append event to audit log
+        """
         with self._conn() as conn:
             conn.execute(
                 """
@@ -416,6 +440,9 @@ class StateStore:
             )
 
     def get_pending_rejections_count(self) -> int:
+        """
+        Return number of comments waiting for rejection
+        """
         with self._conn() as conn:
             row = conn.execute(
                 """
@@ -427,6 +454,9 @@ class StateStore:
             return int(row["cnt"])
 
     def get_pending_rejections(self, limit: int) -> list[dict[str, Any]]:
+        """
+        Return oldest pending comments for rejection
+        """
         with self._conn() as conn:
             rows = conn.execute(
                 """
@@ -441,6 +471,9 @@ class StateStore:
             return [dict(row) for row in rows]
 
     def mark_comments_rejected(self, comment_ids: list[str]) -> None:
+        """
+        Mark comments as rejected
+        """
         if not comment_ids:
             return
 
@@ -454,7 +487,11 @@ class StateStore:
                 """,
                 comment_ids,
             )
+
     def mark_comments_reject_failed(self, comment_ids: list[str]) -> None:
+        """
+        Mark comments as reject_failed
+        """
         if not comment_ids:
             return
 

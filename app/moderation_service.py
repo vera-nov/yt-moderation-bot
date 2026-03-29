@@ -6,6 +6,9 @@ from googleapiclient.errors import HttpError
 
 
 def parse_utc(value: str) -> datetime:
+    """
+    Parse UTC ISO timestamp and return timezone-aware datetime
+    """
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
@@ -16,10 +19,17 @@ class RejectResult:
 
     @property
     def paused_for_quota(self) -> bool:
+        """
+        Return True if operation was paused because of quota
+        """
         return self.status == "quota_paused"
+
 
 class ModerationService:
     def __init__(self, settings, store, youtube, telegram, rules, quota):
+        """
+        Initialize moderation service dependencies
+        """
         self.settings = settings
         self.store = store
         self.youtube = youtube
@@ -58,7 +68,7 @@ class ModerationService:
         quota_status = self.quota.charge_comment_threads_list()
 
         if quota_status["units_spent"] >= quota_status["stop_units"]:
-            self._pause_for_quota(flush_quota_status or self.quota.get_status())
+            self._pause_for_quota(quota_status)
             return
 
         for item in items:
@@ -195,11 +205,17 @@ class ModerationService:
         )
     
     def _pause_for_upcoming_moderation(self) -> RejectResult:
+        """
+        Pause bot before next moderation call hits quota threshold
+        """
         quota_status = self.quota.get_status()
         self._pause_for_quota(quota_status)
         return RejectResult(status="quota_paused", quota_status=quota_status)
 
     def _is_quota_error(self, exc: Exception) -> bool:
+        """
+        Check whether API error is related to quota exhaustion
+        """
         if not isinstance(exc, HttpError):
             return False
 
@@ -315,6 +331,9 @@ class ModerationService:
         return RejectResult(status="success", quota_status=quota_status)
 
     def flush_before_disable(self) -> RejectResult:
+        """
+        Reject all pending comments before disabling the bot
+        """
         pending_count = self.store.get_pending_rejections_count()
         if pending_count == 0:
             return RejectResult(status="empty")
@@ -356,18 +375,17 @@ class ModerationService:
 
     def _pause_for_quota(self, quota_status: dict) -> None:
         """
-        Pause the bot if quota will be reached soon, send log to Telegram
+        Pause the bot and send Telegram message
         """
         if not quota_status["warning_sent"]:
-            self.telegram.send_message(
-                self.settings.tg_admin_chat_id,
+            self._send_telegram_message_safe(
                 (
                     "QUOTA_WARNING\n"
                     f"units_spent={quota_status['units_spent']}\n"
                     f"limit={quota_status['daily_limit']}\n"
                     f"percent={quota_status['percent']}%\n"
                     "Бот переведен в QUOTA_PAUSED."
-                ),
+                )
             )
             self.quota.mark_warning_sent()
 
@@ -421,6 +439,9 @@ class ModerationService:
         return result
 
     def _format_comment_message(self, item: dict, quota_status: dict, dry_run: bool) -> str:
+        """
+        Build Telegram log message for matched comment
+        """
         event_type = "REPLY_REJECTED" if item["comment_type"] == "reply" else "TOP_LEVEL_REJECTED"
         matched_word = item.get("matched_word") or item.get("rule_name")
         text = item.get("text", "")

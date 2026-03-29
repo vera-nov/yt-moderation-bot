@@ -6,6 +6,9 @@ load_dotenv()
 
 
 def _get_bool(name: str, default: str = "false") -> bool:
+    """
+    Read boolean value from environment variable
+    """
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -33,6 +36,9 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    """
+    Load bot settings from environment variables
+    """
     return Settings(
         yt_channel_id=os.environ["YT_CHANNEL_ID"],
         yt_fetch_limit=int(os.getenv("YT_FETCH_LIMIT", "100")),
