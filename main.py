@@ -107,40 +107,37 @@ def try_resume_after_quota_reset(settings, store, telegram) -> None:
 
 LABEL_TO_COMMAND = {
     "/enable": "/enable",
-    "включить бота": "/enable",
-
     "/disable": "/disable",
-    "выключить бота": "/disable",
-
     "/dryrun_on": "/dryrun_on",
-    "включить тестовый режим": "/dryrun_on",
-
     "/dryrun_off": "/dryrun_off",
-    "выключить тестовый режим": "/dryrun_off",
-
     "/quota": "/quota",
-    "показать квоту": "/quota",
-
     "/status": "/status",
+    "/menu": "/menu",
+
+    "включить бота": "/enable",
+    "выключить бота": "/disable",
+    "включить тестовый режим": "/dryrun_on",
+    "выключить тестовый режим": "/dryrun_off",
+    "показать квоту": "/quota",
     "статус бота": "/status",
+    "меню": "/menu",
 }
+
 
 def normalize_command(text: str | None) -> str | None:
     if not text:
         return None
     return LABEL_TO_COMMAND.get(text.strip().lower())
 
+
 def process_telegram_commands(settings, store, telegram, quota, moderation) -> None:
-    """
-    Process admin commands received from Telegram bot
-    """
     offset = store.get_last_update_id() + 1
     updates = telegram.get_updates(offset=offset, timeout=1)
 
     for update in updates:
         store.set_last_update_id(update["update_id"])
 
-        text, chat_id, _user_id = telegram.extract_command(update)
+        text, chat_id, user_id = telegram.extract_command(update)
         command = normalize_command(text)
         if not command:
             continue
@@ -148,17 +145,31 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
         if chat_id != settings.tg_admin_chat_id:
             continue
 
+        if command == "/menu":
+            telegram.send_message(
+                chat_id,
+                "Меню управления ботом:",
+                reply_markup={
+                    "keyboard": [
+                        [{"text": "Включить бота"}, {"text": "Выключить бота"}],
+                        [{"text": "Включить тестовый режим"}, {"text": "Выключить тестовый режим"}],
+                        [{"text": "Показать квоту"}, {"text": "Статус бота"}],
+                    ],
+                    "resize_keyboard": True,
+                    "is_persistent": True,
+                    "input_field_placeholder": "Выберите действие",
+                },
+            )
+            continue
+
         if command == "/enable":
             current = store.get_bot_state()
-
             if current["state"] == "ACTIVE" and current["enabled"]:
                 telegram.send_message(chat_id, "Бот уже включён.\nstate=ACTIVE")
                 continue
-
             if current["state"] == "DRY_RUN" and current["enabled"]:
                 telegram.send_message(chat_id, "Бот уже включён.\nstate=DRY_RUN")
                 continue
-
             if current["state"] == "QUOTA_PAUSED":
                 telegram.send_message(chat_id, build_quota_paused_message())
                 continue
@@ -173,7 +184,7 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
         elif command == "/disable":
             moderation.flush_before_disable()
             store.disable_bot()
-            telegram.send_message(chat_id, "Бот выключен. state=OFF")
+            telegram.send_message(chat_id, "Бот выключен.\nstate=OFF")
 
         elif command == "/dryrun_on":
             store.set_dry_run(True)
@@ -215,20 +226,6 @@ def process_telegram_commands(settings, store, telegram, quota, moderation) -> N
                     f"processed_today={counts['processed_today']}\n"
                     f"rejected_today={counts['rejected_today']}"
                 ),
-            )
-        
-        elif command == "/menu":
-            telegram.send_message(
-                chat_id,
-                "Панель управления ботом:",
-                reply_markup={
-                    "keyboard": [
-                        [{"text": "Включить бота"}, {"text": "Выключить бота"}],
-                        [{"text": "Включить тестовый режим"}, {"text": "Выключить тестовый режим"}],
-                        [{"text": "Показать квоту"}, {"text": "Статус бота"}],
-                    ],
-                    "resize_keyboard": True,
-                },
             )
 
 

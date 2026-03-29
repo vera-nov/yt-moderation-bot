@@ -17,7 +17,6 @@ class TelegramClient:
         chat_id: int,
         text: str,
         reply_markup: dict | None = None,
-        reply_to_message_id: int | None = None,
         ) -> dict:
         """
         Send text message via Telegram bot API
@@ -29,8 +28,6 @@ class TelegramClient:
         }
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
-        if reply_to_message_id is not None:
-            payload["reply_to_message_id"] = reply_to_message_id
 
         resp = self.client.post(f"{self.base_url}/sendMessage", json=payload)
         resp.raise_for_status()
